@@ -20,13 +20,13 @@ const linkSchema = new mongoose.Schema(
       confidence: { type: Number, default: 0 },
       reason: { type: String, default: "Analysis has not been completed." },
     },
-
-    // Tracks the status of the AI analysis
     analysisStatus: {
       type: String,
       enum: ["PENDING", "COMPLETED", "FAILED"],
       default: "PENDING",
     },
+    // ... inside linkSchema
+    collections: [{ type: mongoose.Schema.Types.ObjectId, ref: "Collection" }],
   },
   { timestamps: true }
 );

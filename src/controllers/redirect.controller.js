@@ -4,6 +4,7 @@ import { asyncHandler } from "../utilities/asyncHandler.js";
 import redisClient from "../db/redis.js";
 import { Link } from "../models/Link.js";
 import { analysisQueue } from "../jobs/queue.js";
+import { Collection } from "../models/Collection.js";
 
 const updateViewerCount = async (web_id) => {
   try {
@@ -323,4 +324,42 @@ export const editLongUrl = asyncHandler(async (req, res) => {
       message: err.message || "An error occurred while updating the URL",
     });
   }
+});
+
+// Add this new function to the bottom of src/controllers/redirect.controller.js
+
+export const updateLinkCollections = asyncHandler(async (req, res) => {
+  const { linkId, user_id } = req.params;
+  const { collectionIds } = req.body; // Expect an array of collection IDs
+
+  if (!Array.isArray(collectionIds)) {
+    throw new ApiError(400, "An array of collectionIds is required.");
+  }
+
+  // Update the link with the new array of collections
+  const link = await Link.findOneAndUpdate(
+    { _id: linkId, owner: user_id },
+    { $set: { collections: collectionIds } },
+    { new: true }
+  );
+
+  if (!link) {
+    throw new ApiError(404, "Link not found or permission denied.");
+  }
+
+  // Now, ensure consistency in the Collection models
+  // 1. Add link to the new collections
+  await Collection.updateMany(
+    { _id: { $in: collectionIds }, owner: user_id },
+    { $addToSet: { links: linkId } }
+  );
+  // 2. Remove link from any collections it's no longer in
+  await Collection.updateMany(
+    { _id: { $nin: collectionIds }, owner: user_id, links: linkId },
+    { $pull: { links: linkId } }
+  );
+
+  res
+    .status(200)
+    .json({ message: "Link collections updated successfully.", link });
 });

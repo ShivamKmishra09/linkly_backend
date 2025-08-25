@@ -5,6 +5,7 @@ import {
   handleRedirect,
   deleteUrl,
   editLongUrl,
+  updateLinkCollections,
 } from "../controllers/redirect.controller.js";
 
 import { checkForUserAuthentication } from "../middleware/auth.middleware.js";
@@ -21,5 +22,8 @@ router
   .route("/loggedin/:user_id/url/:linkId")
   .patch(checkForUserAuthentication, editLongUrl) // Edits a link
   .delete(checkForUserAuthentication, deleteUrl);
+router
+  .route("/loggedin/:user_id/link/:linkId/collections")
+  .patch(checkForUserAuthentication, updateLinkCollections);
 
 export default router;

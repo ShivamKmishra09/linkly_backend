@@ -4,52 +4,7 @@ import "dotenv/config";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- 1. Web Scraper using Puppeteer ---
-async function scrapeTextFromUrl(url) {
-  let browser = null;
-  try {
-    console.log(`Launching headless browser to scrape: ${url}`);
-    browser = await puppeteer.launch({ headless: "new" });
-    const page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    );
-    await page.goto(url, { waitUntil: "networkidle0", timeout: 35000 });
-    const textContent = await page.evaluate(() => document.body.innerText);
-    console.log(`Successfully scraped ${textContent.length} characters.`);
-    return textContent.replace(/\s\s+/g, " ").trim().slice(0, 8000);
-  } catch (error) {
-    console.error(`Puppeteer scraping failed for URL: ${url}`, error.message);
-    return null;
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
-}
-
-// --- 2. AI Analysis Logic ---
-export async function analyzeUrlContent(url) {
-  const text = await scrapeTextFromUrl(url);
-
-  if (!text || text.length < 50) {
-    console.log("Not enough meaningful content to analyze from the URL.");
-    return {
-      summary: "Could not extract sufficient text content from this URL.",
-      tags: [],
-      safety: {
-        safety_rating: 3,
-        justification:
-          "Unable to analyze the content. The page may be an image, a login wall, or a complex application.",
-      },
-    };
-  }
-
-  // --- THIS IS THE FIX ---
-  // The model name has been updated to the latest stable and efficient version.
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-
-  const summaryPrompt = `You are an assistant that summarizes the content of webpages. 
+const summaryPromptTemplate = `You are an assistant that summarizes the content of webpages. 
     The following text is the scraped content from a given URL. 
     Task:
     1. Identify the main purpose of the webpage.  
@@ -70,10 +25,10 @@ export async function analyzeUrlContent(url) {
       "summary": "string, concise summary of the webpage (max 150 words)",
       "tags": ["string", "string", ...] // up to 5 keywords
     }
-    Text: "${text}"`;
+    Text: """\${text}"""`;
 
-  // Safety and classification prompts
-  const safetyPrompt = `You are a security and safety auditor for web content.
+// Safety and classification prompts
+const safetyPromptTemplate = `You are a security and safety auditor for web content.
   The following text is the scraped content from a given URL. 
 
   Task:
@@ -97,9 +52,9 @@ export async function analyzeUrlContent(url) {
       "safety_rating": 1-5,
       "explanation": "string";
     }
-    Here is the scraped content from the URL: "${text}"`;
+    Here is the scraped content from the URL: """\${text}"""`;
 
-  const classificationPrompt = `
+const classificationPromptTemplate = `
       You are a web content classifier. 
       Your job is to analyze scraped webpage content and classify it into a predefined category.
 
@@ -124,45 +79,211 @@ export async function analyzeUrlContent(url) {
         "reason": "brief explanation of why this category was chosen"
       }
       Here is the scraped text:
-      """${text}"""
+      """\${text}"""
       `;
 
+// --- 1. Puppeteer Web Scraper (Unchanged) ---
+async function scrapeTextFromUrl(url) {
+  let browser = null;
   try {
-    const [summaryResult, safetyResult, classificationResult] =
-      await Promise.all([
-        model.generateContent(summaryPrompt),
-        model.generateContent(safetyPrompt),
-        model.generateContent(classificationPrompt),
+    console.log(`Launching headless browser to scrape: ${url}`);
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    );
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
+    const textContent = await page.evaluate(() => document.body.innerText);
+    console.log(`Successfully scraped ${textContent.length} characters.`);
+    return textContent.replace(/\s\s+/g, " ").trim();
+  } catch (error) {
+    console.error(`Puppeteer scraping failed for URL: ${url}`, error.message);
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+}
+
+// --- ⭐ NEW: A Resilient Function to Call the AI with Retries ⭐ ---
+async function generateContentWithRetry(model, prompt) {
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await model.generateContent(prompt);
+    } catch (error) {
+      // Check if it's a 429 rate limit error
+      if (error.status === 429) {
+        console.warn(
+          `Rate limit hit. Retrying attempt ${i + 1} of ${maxRetries}...`
+        );
+        // Extract the suggested retry delay from the error details
+        const retryDetails = error.errorDetails?.find(
+          (d) => d["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
+        );
+        const delaySeconds = retryDetails
+          ? parseInt(retryDetails.retryDelay.replace("s", ""), 10)
+          : 30;
+
+        console.log(`Waiting for ${delaySeconds} seconds before retrying.`);
+        await new Promise((resolve) =>
+          setTimeout(resolve, delaySeconds * 1000)
+        );
+      } else {
+        // For other errors (like invalid API key), throw immediately
+        throw error;
+      }
+    }
+  }
+  // If all retries fail, throw the final error
+  throw new Error(
+    "Failed to generate content after multiple retries due to rate limiting."
+  );
+}
+
+// --- 2. MapReduce Pipeline for Long Text Summarization ---
+async function getSummarizationFromChunks(text, model, finalSummaryUserPrompt) {
+  const tokenLimit = 3000 * 4;
+  const textChunks = [];
+  for (let i = 0; i < text.length; i += tokenLimit) {
+    textChunks.push(text.substring(i, i + tokenLimit));
+  }
+  console.log(
+    `Split text into ${textChunks.length} chunks for MapReduce pipeline.`
+  );
+
+  // --- ⭐ THE RATE LIMIT FIX ⭐ ---
+  // Instead of Promise.all, we process chunks sequentially with a delay.
+  const chunkSummaries = [];
+  for (const chunk of textChunks) {
+    const prompt = `This is a snippet from a larger document. Summarize its main points concisely. Snippet: """${chunk}"""`;
+    const result = await generateContentWithRetry(model, prompt);
+    chunkSummaries.push(result.response.text());
+    console.log(
+      `Summarized chunk ${chunkSummaries.length} of ${textChunks.length}.`
+    );
+    // Wait for 1 second before sending the next request to be polite to the API
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  console.log("Finished summarizing all chunks sequentially.");
+
+  const combinedSummaries = chunkSummaries.join("\n\n");
+  const finalSummaryPrompt = finalSummaryUserPrompt.replace(
+    "${text}",
+    combinedSummaries
+  );
+  const finalResult = await generateContentWithRetry(model, finalSummaryPrompt); // Use retry function
+  return finalResult.response.text();
+}
+
+// --- 3. FINAL AI Analysis Function with Conditional Logic ---
+export async function analyzeUrlContent(url) {
+  const text = await scrapeTextFromUrl(url);
+  const characterThreshold = 4000; // Approx. 1000 tokens
+
+  if (!text || text.length < 100) {
+    return {
+      summary: "Could not extract sufficient text content from this URL.",
+      tags: [],
+      safety: {
+        safety_rating: 3,
+        justification:
+          "Unable to analyze content. The page may be an image, a login wall, or a complex application.",
+      },
+      classification: {
+        category: "Other",
+        confidence: 0.5,
+        reason: "Could not scrape content.",
+      },
+    };
+  }
+
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
+  try {
+    let summaryData, safety, classification;
+
+    if (text.length <= characterThreshold) {
+      // --- FAST PATH: Use a single, combined prompt for efficiency ---
+      console.log("Text is short. Using single, combined prompt (fast path).");
+      const combinedPrompt = `
+        Analyze the following text and provide a complete analysis. Your response must be a single, valid JSON object with the top-level keys "summary_and_tags", "safety", and "classification".
+
+        1.  For "summary_and_tags": Use the following rules: ${summaryPromptTemplate}
+        2.  For "safety": Use the following rules: ${safetyPromptTemplate}
+        3.  For "classification": Use the following rules: ${classificationPromptTemplate}
+
+        Text to analyze: """${text}"""
+      `;
+
+      const result = await generateContentWithRetry(model, combinedPrompt); // Use retry function
+      const fullResponse = JSON.parse(
+        result.response
+          .text()
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim()
+      );
+
+      summaryData = fullResponse.summary_and_tags;
+      safety = fullResponse.safety;
+      classification = fullResponse.classification;
+    } else {
+      // --- ROBUST PATH: Use the chunking pipeline for long texts ---
+      console.log("Text is long. Using chunking pipeline (robust path).");
+      const summaryJsonText = await getSummarizationFromChunks(
+        text,
+        model,
+        summaryPromptTemplate
+      );
+      summaryData = JSON.parse(
+        summaryJsonText
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim()
+      );
+
+      const firstChunk = text.slice(0, 8000);
+      const [safetyResult, classificationResult] = await Promise.all([
+        model.generateContent(
+          safetyPromptTemplate.replace("${text}", firstChunk)
+        ),
+        model.generateContent(
+          classificationPromptTemplate.replace("${text}", firstChunk)
+        ),
       ]);
 
-    const summaryText = summaryResult.response
-      .text()
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-    const safetyText = safetyResult.response
-      .text()
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-    const categoryResult = classificationResult.response
-      .text()
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
-    const summary = JSON.parse(summaryText);
-    const safety = JSON.parse(safetyText);
-    const classification = JSON.parse(categoryResult);
+      safety = JSON.parse(
+        safetyResult.response
+          .text()
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim()
+      );
+      classification = JSON.parse(
+        classificationResult.response
+          .text()
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim()
+      );
+    }
 
     return {
-      summary: summary.summary,
-      tags: summary.tags,
-      safety,
+      summary: summaryData.summary,
+      tags: summaryData.tags,
+      safety: {
+        safety_rating: safety.safety_rating,
+        justification: safety.explanation, // Match your prompt's key
+      },
       classification,
     };
   } catch (error) {
-    console.error("Error parsing AI response:", error);
+    console.error("Error in AI analysis pipeline:", error);
     throw new Error("Failed to get a valid response from the AI model.");
   }
 }

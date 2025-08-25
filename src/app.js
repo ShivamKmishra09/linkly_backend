@@ -66,11 +66,13 @@ import authenticationRouter from "./routers/authentication.router.js";
 import SubscriptionRouter from "./routers/subscription.router.js";
 import paymentRouter from "./routers/payment.router.js";
 import redirectRouter from "./routers/redirect.router.js";
+import collectionRouter from "./routers/collection.router.js";
 
 app.use("/", SubscriptionRouter);
 app.use("/", authenticationRouter);
 app.use("/", paymentRouter);
 // app.use('/',redirectRouter);
 app.use("/", createLinkLimiter, redirectRouter);
+app.use("/", collectionRouter);
 
 export default app;
