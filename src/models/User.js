@@ -1,46 +1,39 @@
 import mongoose from "mongoose";
-import jwt from 'jsonwebtoken';
+import jwt from "jsonwebtoken";
 
 const userSchema = mongoose.Schema({
-    username: {
-        type: String,
-        default: "Unkonwn",
-    },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        default: "lub@gmail.com"
-    },
-    password: {
-        type: String,
-        required: true,
-        default: "123456",
-    },
-    subscription: {
-        type: String,
-        enum: ['Free', 'Premium'],
-        default: 'Free',
-    },
-    endDateOfSubscription: {
-        type: Date,
-        default: null
-    },
-    Links: {
-        newLink: {
-            type: [String],
-            default: null
-        },
-        oldLink: {
-            type: [String],
-            default: null
-        }
-    },
-    Viewer: {
-        type:[Number],
-        default: null
-    }
+  username: {
+    type: String,
+    default: "Unkonwn",
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    default: "xyz@gmail.com",
+  },
+  password: {
+    type: String,
+    required: true,
+    default: "Abc@1234",
+  },
+  subscription: {
+    type: String,
+    enum: ["Free", "Premium"],
+    default: "Free",
+  },
+  endDateOfSubscription: {
+    type: Date,
+    default: null,
+  },
+  Viewer: {
+    type: [Number],
+    default: null,
+  },
+  LinkTags: {
+    type: [String],
+    default: null,
+  },
 });
 
-export const User = mongoose.model('User', userSchema);
-
+export const User = mongoose.model("User", userSchema);

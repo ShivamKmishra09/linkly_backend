@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import "dotenv/config";
 import { Link } from "../models/Link.js";
 import { analyzeUrlContent } from "../services/aiService.js";
+import { assignLinkToSystemCollection } from "../services/systemCollectionService.js";
 // --- 1. IMPORT YOUR DATABASE CONNECTION FUNCTION ---
 import { connectDB } from "../db/index.js";
 
@@ -54,6 +55,22 @@ const startWorker = async () => {
         link.analysisStatus = "COMPLETED";
 
         await link.save();
+
+        // Automatically assign link to appropriate system collection
+        try {
+          await assignLinkToSystemCollection(
+            link.owner,
+            link._id,
+            analysisResult.classification
+          );
+        } catch (error) {
+          console.error("Failed to assign link to system collection:", error);
+        }
+        try {
+          await addLinkTagsToUser(link.owner, analysisResult.tags);
+        } catch (error) {
+          console.error("Failed to add link tags to user:", error);
+        }
       } catch (error) {
         console.error(`Job failed for linkId: ${linkId}`, error);
         await Link.findByIdAndUpdate(linkId, { analysisStatus: "FAILED" });

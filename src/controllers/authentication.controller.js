@@ -3,6 +3,7 @@ import { ApiError } from "../utilities/ApiError.js";
 import { asyncHandler } from "../utilities/asyncHandler.js";
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { createSystemCollections } from "../services/systemCollectionService.js";
 
 export const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
@@ -32,7 +33,16 @@ export const registerUser = asyncHandler(async (req, res) => {
         subscription: "Free",
       });
       user.save()
-        .then(result => {
+        .then(async (result) => {
+          // Create system collections for the new user
+          try {
+            await createSystemCollections(result._id);
+            console.log(`System collections created for user ${result._id}`);
+          } catch (error) {
+            console.error("Error creating system collections:", error);
+            // Don't fail the registration if system collections fail
+          }
+          
           res.status(201).json({
             message: "user created"
           });
@@ -122,6 +132,15 @@ export const googleAuthHandler = asyncHandler(async (req, res) => {
       });
       
       await user.save();
+      
+      // Create system collections for the new user
+      try {
+        await createSystemCollections(user._id);
+        console.log(`System collections created for user ${user._id}`);
+      } catch (error) {
+        console.error("Error creating system collections:", error);
+        // Don't fail the registration if system collections fail
+      }
     } else {
       // Make sure existing user has Links properly initialized
       if (!user.Links) {

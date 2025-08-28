@@ -24,6 +24,41 @@ const updateViewerCount = async (web_id) => {
 };
 // ... (all other controller functions remain the same)
 
+// Improved short ID generation function
+const generateShortId = async (length = 7) => {
+  const maxRetries = 10;
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Generate random string
+    let shortId = "";
+    for (let i = 0; i < length; i++) {
+      shortId += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    // Check if it already exists
+    const existingLink = await Link.findOne({ shortId });
+    if (!existingLink) {
+      return shortId;
+    }
+
+    // If we're on the last attempt, try with a longer ID
+    if (attempt === maxRetries) {
+      return await generateShortId(length + 1);
+    }
+
+    // Add a small delay to avoid overwhelming the database
+    if (attempt > 5) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  // Fallback: generate with timestamp to ensure uniqueness
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 4);
+  return `${timestamp}${random}`.substring(0, length);
+};
+
 // ⭐️ HANDLE the public redirect with SAFETY WARNING ⭐️
 export const handleRedirect = asyncHandler(async (req, res) => {
   const { web_id } = req.params;
@@ -74,13 +109,15 @@ export const handleRedirect = asyncHandler(async (req, res) => {
 
 export const addurl = asyncHandler(async (req, res) => {
   try {
-    const oldLink = req.body.oldLink;
+    const { oldLink, customShortId } = req.body;
     const user_id = req.params.user_id;
     const user = await User.findById(user_id);
+
     if (!user) {
       console.log("User not found");
       throw new ApiError(404, "User not found");
     }
+
     if (!oldLink.startsWith("http://") && !oldLink.startsWith("https://")) {
       console.log("Invalid URL   ", oldLink);
       throw new ApiError(
@@ -89,26 +126,50 @@ export const addurl = asyncHandler(async (req, res) => {
       );
     }
 
-    // Ensure Links and its subfields are initialized
-    if (!user.Links.oldLink) user.Links.oldLink = [];
-    if (!user.Links.newLink) user.Links.newLink = [];
+    // Check if link already exists for this user
+    const existingLink = await Link.findOne({
+      longUrl: oldLink,
+      owner: user_id,
+    });
 
-    if (user.Links.oldLink.includes(oldLink)) {
-      console.log("Link already exists");
-      throw new ApiError(400, "Link already exists");
+    if (existingLink) {
+      console.log("Link already exists for this user");
+      throw new ApiError(400, "Link already exists for this user");
     }
 
-    user.Links.oldLink.push(oldLink);
+    let shortId;
 
-    const existingLinks = user.Links.newLink;
+    if (customShortId) {
+      // Validate custom short ID
+      if (customShortId.length < 3 || customShortId.length > 20) {
+        throw new ApiError(
+          400,
+          "Custom short ID must be between 3 and 20 characters"
+        );
+      }
 
-    let random_string;
-    do {
-      random_string = Math.random().toString(36).substring(2, 7);
-    } while (await Link.exists({ shortId: random_string }));
+      // Check if custom short ID contains only valid characters
+      if (!/^[a-zA-Z0-9_-]+$/.test(customShortId)) {
+        throw new ApiError(
+          400,
+          "Custom short ID can only contain letters, numbers, hyphens, and underscores"
+        );
+      }
+
+      // Check if custom short ID already exists
+      const existingCustomLink = await Link.findOne({ shortId: customShortId });
+      if (existingCustomLink) {
+        throw new ApiError(400, "Custom short ID already exists");
+      }
+
+      shortId = customShortId;
+    } else {
+      // Generate unique short ID
+      shortId = await generateShortId();
+    }
 
     const newLink = new Link({
-      shortId: random_string,
+      shortId,
       longUrl: oldLink,
       owner: user_id,
     });
@@ -120,7 +181,8 @@ export const addurl = asyncHandler(async (req, res) => {
 
     res.status(200).json({
       message: "Link added successfully",
-      shortUrl: `${process.env.REACT_APP_FRONTEND_URL}/linkly/${random_string}`,
+      shortUrl: `${process.env.REACT_APP_FRONTEND_URL}/linkly/${shortId}`,
+      isCustom: !!customShortId,
     });
   } catch (err) {
     console.log(err);
@@ -134,6 +196,7 @@ export const increaseViewer = asyncHandler(async (req, res) => {
   try {
     const web_id = req.params.web_id;
     const cacheKey = `link:${web_id}`;
+
     // 1. First, check Redis
     const cachedUrl = await redisClient.get(cacheKey);
 
@@ -150,30 +213,21 @@ export const increaseViewer = asyncHandler(async (req, res) => {
 
     // 3. CACHE MISS: Go to the database
     console.log(`CACHE MISS for ${web_id}`);
-    const users = await User.find({
-      "Links.newLink": `${process.env.REACT_APP_FRONTEND_URL}/linkly/${web_id}`,
-    });
-    if (users.length > 0) {
-      const user = users[0];
-      const index = user.Links.newLink.indexOf(
-        `${process.env.REACT_APP_FRONTEND_URL}/linkly/${web_id}`
-      );
+    const link = await Link.findOne({ shortId: web_id });
 
-      if (index !== -1) {
-        user.Viewer[index] += 1;
-        await user.save();
-        res.status(200).json({
-          message: "Viewer count increased successfully",
-          oldLink: user.Links.oldLink[index],
-        });
-      } else {
-        console.log("Link not found in user's Links");
-        throw new ApiError(404, "Link not found in user's Links");
-      }
-    } else {
+    if (!link) {
       console.log("Link not found");
       throw new ApiError(404, "Link not found");
     }
+
+    // Increment viewer count
+    link.viewerCount = (link.viewerCount || 0) + 1;
+    await link.save();
+
+    res.status(200).json({
+      message: "Viewer count increased successfully",
+      oldLink: link.longUrl,
+    });
   } catch (err) {
     console.log(err);
     res.status(400).json({
@@ -247,32 +301,49 @@ export const editShortUrl = asyncHandler(async (req, res) => {
     // Log received data to debug
     console.log("Edit URL request:", { user_id, oldShortUrl, newShortUrl });
 
-    const user = await User.findById(user_id);
-    if (!user) {
-      console.log("User not found");
-      throw new ApiError(404, "User not found");
+    // Extract short ID from the old short URL
+    const oldShortId = oldShortUrl.split("/").pop();
+    const newShortId = newShortUrl.split("/").pop();
+
+    // Check if the old link exists and belongs to the user
+    const oldLink = await Link.findOne({
+      shortId: oldShortId,
+      owner: user_id,
+    });
+
+    if (!oldLink) {
+      console.log("Short URL not found or permission denied");
+      throw new ApiError(404, "Short URL not found or permission denied");
     }
 
-    const idx = user.Links.newLink.indexOf(oldShortUrl);
-    if (idx === -1) {
-      console.log("Short URL not found");
-      throw new ApiError(404, "Short URL not found");
-    }
-
-    // +++ Invalidate the OLD cache key +++
-    const old_web_id = oldShortUrl.split("/").pop();
-    await redisClient.del(`link:${old_web_id}`);
-    console.log(`CACHE INVALIDATED for old link ${old_web_id}`);
-
-    // Check if the new short URL already exists for this user
-    if (user.Links.newLink.includes(newShortUrl)) {
+    // Check if the new short ID already exists
+    const existingLink = await Link.findOne({ shortId: newShortId });
+    if (existingLink) {
       console.log("Short URL already exists");
       throw new ApiError(400, "Short URL already exists");
     }
 
-    user.Links.newLink[idx] = newShortUrl;
-    await user.save();
-    res.status(200).json({ message: "Short URL updated successfully" });
+    // +++ Invalidate the OLD cache key +++
+    await redisClient.del(`link:${oldShortId}`);
+    console.log(`CACHE INVALIDATED for old link ${oldShortId}`);
+
+    // Update the link with new short ID
+    oldLink.shortId = newShortId;
+    await oldLink.save();
+
+    // Set cache for the new short ID
+    const newCacheKey = `link:${newShortId}`;
+    await redisClient.set(
+      newCacheKey,
+      JSON.stringify(oldLink.toObject()),
+      "EX",
+      3600
+    );
+
+    res.status(200).json({
+      message: "Short URL updated successfully",
+      newShortUrl: `${process.env.REACT_APP_FRONTEND_URL}/linkly/${newShortId}`,
+    });
   } catch (err) {
     console.error("Error in editShortUrl:", err);
     res.status(err.statusCode || 500).json({
