@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import session from "express-session"; // 1. Import express-session
-import RedisStore from "connect-redis"; // 2. Import connect-redis
+import { RedisStore } from "connect-redis";
 import redisClient from "./db/redis.js"; // 3. Import your configured Redis client
 
 const app = express();
