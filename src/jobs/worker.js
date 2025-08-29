@@ -6,14 +6,6 @@ import { assignLinkToSystemCollection } from "../services/systemCollectionServic
 // --- 1. IMPORT YOUR DATABASE CONNECTION FUNCTION ---
 import { connectDB } from "../db/index.js";
 
-// --- 2. DEFINE THE REDIS CONNECTION OPTIONS ---
-const redisConnectionOptions = {
-  host: process.env.REDIS_HOST || "127.0.0.1",
-  port: process.env.REDIS_PORT || 6379,
-  // Add this line to prevent the error from the previous step
-  maxRetriesPerRequest: null,
-};
-
 // --- 3. CREATE AN ASYNC FUNCTION TO START THE WORKER ---
 const startWorker = async () => {
   // --- 4. CONNECT TO MONGODB FIRST ---
@@ -26,6 +18,30 @@ const startWorker = async () => {
       error
     );
     process.exit(1); // Exit if DB connection fails
+  }
+
+  let redisConnectionOptions;
+
+  // Check if the REDIS_URL environment variable is available (for production)
+  if (process.env.REDIS_URL) {
+    const redisUrl = new URL(process.env.REDIS_URL);
+    redisConnectionOptions = {
+      host: redisUrl.hostname,
+      port: redisUrl.port,
+      password: redisUrl.password,
+      // For Upstash, TLS is required
+      tls: {
+        rejectUnauthorized: false,
+      },
+      maxRetriesPerRequest: null,
+    };
+  } else {
+    // Fallback for local development
+    redisConnectionOptions = {
+      host: process.env.REDIS_HOST || "127.0.0.1",
+      port: process.env.REDIS_PORT || 6379,
+      maxRetriesPerRequest: null,
+    };
   }
 
   // --- 5. INITIALIZE THE WORKER ONLY AFTER DB IS CONNECTED ---
