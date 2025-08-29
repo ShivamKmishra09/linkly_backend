@@ -1,78 +1,61 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import bodyParser from "body-parser";
-import session from "express-session";
-import dotenv from "dotenv";
-import rateLimit from "express-rate-limit";
-
-dotenv.config();
+import session from "express-session"; // 1. Import express-session
+import RedisStore from "connect-redis"; // 2. Import connect-redis
+import redisClient from "./db/redis.js"; // 3. Import your configured Redis client
 
 const app = express();
 
-const createLinkLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // Limit each IP to 20 create link requests per windowMs
-  message:
-    "Too many links created from this IP, please try again after 15 minutes",
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+// --- Middleware Setup ---
+
+// 4. Initialize Redis store for sessions
+const redisStore = new RedisStore({
+  client: redisClient,
+  prefix: "linkly-session:", // A prefix to keep session keys organized in Redis
 });
 
-app.use(bodyParser.json({ limit: "5mb" }));
-app.get("/", (req, res) => res.send("Hello"));
-
-// Improved CORS configuration
+// Use CORS - This should come before routes and session middleware
 app.use(
   cors({
-    origin: process.env.REACT_APP_FRONTEND_URL,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    origin: process.env.CORS_ORIGIN,
     credentials: true,
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-CSRF-Token",
-      "X-Requested-With",
-      "Accept",
-      "Accept-Version",
-      "Content-Length",
-      "Content-MD5",
-      "Date",
-      "X-Api-Version",
-    ],
-    exposedHeaders: ["Content-Range", "X-Content-Range"],
   })
 );
 
-app.use(cookieParser());
-
+// Standard middleware for parsing JSON, URL-encoded data, and cookies
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+app.use(express.static("public"));
+app.use(cookieParser());
 
+// 5. Configure and use session middleware with Redis
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: true,
+    store: redisStore,
+    secret: process.env.SESSION_SECRET, // A strong secret for signing the session ID cookie
+    resave: false, // Don't save session if unmodified
+    saveUninitialized: false, // Don't create session until something is stored
     cookie: {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production", // Use secure cookies in production (HTTPS)
+      httpOnly: true, // Prevents client-side JS from reading the cookie
+      maxAge: 1000 * 60 * 60 * 24 * 7, // Session TTL: 7 days
     },
   })
 );
 
-import authenticationRouter from "./routers/authentication.router.js";
-import SubscriptionRouter from "./routers/subscription.router.js";
-import paymentRouter from "./routers/payment.router.js";
+// --- Route Imports ---
+import authRouter from "./routers/authentication.router.js";
 import redirectRouter from "./routers/redirect.router.js";
 import collectionRouter from "./routers/collection.router.js";
+import subscriptionRouter from "./routers/subscription.router.js";
+import paymentRouter from "./routers/payment.router.js";
 
-app.use("/", SubscriptionRouter);
-app.use("/", authenticationRouter);
-app.use("/", paymentRouter);
-// app.use('/',redirectRouter);
-app.use("/", createLinkLimiter, redirectRouter);
-app.use("/", collectionRouter);
+// --- Route Declarations ---
+app.use("/api/v1/users", authRouter);
+app.use("/api/v1/url", redirectRouter);
+app.use("/api/v1/collections", collectionRouter);
+app.use("/api/v1/subscription", subscriptionRouter);
+app.use("/api/v1/payment", paymentRouter);
 
-export default app;
+export { app };
