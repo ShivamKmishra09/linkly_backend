@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import { config } from 'dotenv';
+import mongoose from "mongoose";
+import { config } from "dotenv";
 config();
 
 let DB_URL = process.env.DB_URL;
@@ -7,8 +7,8 @@ let DB_URL = process.env.DB_URL;
 const connectDB = async () => {
   try {
     await mongoose.connect(DB_URL, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
+      // useNewUrlParser: true,
+      // useUnifiedTopology: true,
       autoIndex: true,
     });
     console.log("Connected to MongoDB database");

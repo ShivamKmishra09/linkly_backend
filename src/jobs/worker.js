@@ -5,6 +5,7 @@ import { analyzeUrlContent } from "../services/aiService.js";
 import { assignLinkToSystemCollection } from "../services/systemCollectionService.js";
 // --- 1. IMPORT YOUR DATABASE CONNECTION FUNCTION ---
 import { connectDB } from "../db/index.js";
+import { URL } from "url";
 
 // --- 3. CREATE AN ASYNC FUNCTION TO START THE WORKER ---
 const startWorker = async () => {
@@ -19,31 +20,14 @@ const startWorker = async () => {
     );
     process.exit(1); // Exit if DB connection fails
   }
+  const redisUrl = new URL(process.env.REDIS_URL);
 
-  let redisConnectionOptions;
-
-  // Check if the REDIS_URL environment variable is available (for production)
-  if (process.env.REDIS_URL) {
-    const redisUrl = new URL(process.env.REDIS_URL);
-    redisConnectionOptions = {
-      host: redisUrl.hostname,
-      port: redisUrl.port,
-      password: redisUrl.password,
-      // For Upstash, TLS is required
-      tls: {
-        rejectUnauthorized: false,
-      },
-      maxRetriesPerRequest: null,
-    };
-  } else {
-    // Fallback for local development
-    redisConnectionOptions = {
-      host: process.env.REDIS_HOST || "127.0.0.1",
-      port: process.env.REDIS_PORT || 6379,
-      maxRetriesPerRequest: null,
-    };
-  }
-
+  const connection = {
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port),
+    password: redisUrl.password,
+    tls: {}, // 👈 enables TLS
+  };
   // --- 5. INITIALIZE THE WORKER ONLY AFTER DB IS CONNECTED ---
   const worker = new Worker(
     "link-analysis",
@@ -92,7 +76,7 @@ const startWorker = async () => {
         await Link.findByIdAndUpdate(linkId, { analysisStatus: "FAILED" });
       }
     },
-    { connection: redisConnectionOptions }
+    { connection }
   );
 
   worker.on("completed", (job) => {
