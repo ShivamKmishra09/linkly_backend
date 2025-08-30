@@ -19,10 +19,7 @@ const startWorker = async () => {
     );
     process.exit(1); // Exit if DB connection fails
   }
-  const connection = process.env.REDIS_URL || {
-    host: "127.0.0.1",
-    port: 6379,
-  };
+  const connection = process.env.REDIS_URL;
 
   // --- 5. INITIALIZE THE WORKER ONLY AFTER DB IS CONNECTED ---
   const worker = new Worker(

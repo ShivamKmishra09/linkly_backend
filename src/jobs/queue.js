@@ -1,10 +1,7 @@
 import { Queue } from "bullmq";
 import "dotenv/config";
 
-const connection = process.env.REDIS_URL || {
-  host: "127.0.0.1",
-  port: 6379,
-};
+const connection = process.env.REDIS_URL;
 
 export const analysisQueue = new Queue("link-analysis", {
   connection,
