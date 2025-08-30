@@ -5,8 +5,8 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node --env-file .env src/index.js",
-    "dev": "nodemon --env-file .env src/index.js",
+    "start": "nodemon src/index.js",
+    "dev": "nodemon src/index.js",
     "worker": "node src/jobs/worker.js"
   },
   "keywords": [],

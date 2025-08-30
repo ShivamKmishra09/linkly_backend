@@ -5,7 +5,6 @@ import { analyzeUrlContent } from "../services/aiService.js";
 import { assignLinkToSystemCollection } from "../services/systemCollectionService.js";
 // --- 1. IMPORT YOUR DATABASE CONNECTION FUNCTION ---
 import { connectDB } from "../db/index.js";
-import { URL } from "url";
 
 // --- 3. CREATE AN ASYNC FUNCTION TO START THE WORKER ---
 const startWorker = async () => {
@@ -20,14 +19,11 @@ const startWorker = async () => {
     );
     process.exit(1); // Exit if DB connection fails
   }
-  const redisUrl = new URL(process.env.REDIS_URL);
-
-  const connection = {
-    host: redisUrl.hostname,
-    port: Number(redisUrl.port),
-    password: redisUrl.password,
-    tls: {}, // 👈 enables TLS
+  const connection = process.env.REDIS_URL || {
+    host: "127.0.0.1",
+    port: 6379,
   };
+
   // --- 5. INITIALIZE THE WORKER ONLY AFTER DB IS CONNECTED ---
   const worker = new Worker(
     "link-analysis",
